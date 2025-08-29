@@ -1,0 +1,61 @@
+# Powerball Number Prediction Model
+import pandas as pd
+import numpy as np
+import random
+from collections import Counter
+
+# Load historical data
+data_path = 'Data/FilteredData_2022_2025.csv'  # Adjust path as needed
+df = pd.read_csv(data_path)
+
+# Assuming columns: 'DrawDate', 'Num 1', 'Num 2', 'Num 3', 'Num 4', 'Num 5', 'Powerball'
+main_numbers = df[['Num 1', 'Num 2', 'Num 3', 'Num 4', 'Num 5']].values.flatten()
+powerballs = df['Powerball'].values
+
+# Hot and cold numbers
+main_counter = Counter(main_numbers)
+powerball_counter = Counter(powerballs)
+
+# Get top/bottom N hot/cold numbers
+def get_hot_cold(counter, n=5):
+    hot = [num for num, _ in counter.most_common(n)]
+    cold = [num for num, _ in counter.most_common()[:-n-1:-1]]
+    return hot, cold
+
+hot_main, cold_main = get_hot_cold(main_counter)
+hot_pb, cold_pb = get_hot_cold(powerball_counter)
+
+# Weighted random selection
+def weighted_random(counter, pool_size, pick_count):
+    weights = [counter.get(i, 1) for i in range(1, pool_size+1)]
+    total = sum(weights)
+    norm_weights = [w / total for w in weights]
+    return np.random.choice(range(1, pool_size+1), size=pick_count, replace=False, p=norm_weights)
+
+# Predict next numbers
+def predict_next():
+    # Powerball rules: 5 numbers (1-69), 1 powerball (1-26)
+    main_pool = 69
+    pb_pool = 26
+
+    # Strategy: 2 hot, 2 cold, 1 weighted random
+    prediction = []
+    prediction += random.sample(hot_main, 2)
+    prediction += random.sample(cold_main, 2)
+    remaining = set(range(1, main_pool+1)) - set(prediction)
+    weighted_pick = weighted_random(main_counter, main_pool, 1)
+    for num in weighted_pick:
+        if num in remaining:
+            prediction.append(num)
+            break
+    prediction = sorted(prediction)
+
+    # Powerball: 1 hot/cold/weighted random
+    pb_choice = random.choice([random.choice(hot_pb), random.choice(cold_pb), weighted_random(powerball_counter, pb_pool, 1)[0]])
+
+    return prediction, pb_choice
+
+if __name__ == "__main__":
+    main_nums, powerball = predict_next()
+    print(f"Predicted main numbers: {main_nums}")
+    print(f"Predicted Powerball: {powerball}")
