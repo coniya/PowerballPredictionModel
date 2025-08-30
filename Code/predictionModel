@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import random
 from collections import Counter
+from itertools import combinations
 
 # Load historical data
 data_path = 'Data/CleanedData_2010_2025.csv'  # Adjust path as needed
@@ -87,13 +88,38 @@ lottery_strategies = {
     }
 }
 
+# --- Generate number pairs from past draws ---
+def get_number_pairs(draws):
+    pair_list = []
+    for row in draws:
+        row_pairs = combinations(sorted(row), 2)
+        pair_list.extend(row_pairs)
+    pair_counts = Counter(pair_list)
+    sorted_pairs = [pair for pair, _ in pair_counts.most_common()]
+    return sorted_pairs
+
+# --- Add number pairs to lottery strategies ---
+lottery_strategies["white"]["pairs"] = get_number_pairs(filtered_df[white_balls].values)
+
 #slice the lists to only contain a certain number of elements
 hot_numbers = lottery_strategies["white"]["hot"][:hot_limit]
 cold_numbers = lottery_strategies["white"]["cold"][:cold_limit]
 overdue_numbers = lottery_strategies["white"]["overdue"] #keep full list
 
-#generate multiple tickets based on user input
-def generate_multiple_tickets(lottery_strategies):
+
+def get_number_pairs(draws):
+    pair_list = []
+    for row in draws:
+        row_pairs = combinations(sorted(row), 2)
+        pair_list.extend(row_pairs)
+    pair_counts = Counter(pair_list)
+    sorted_pairs = [pair for pair, _ in pair_counts.most_common()]
+    return sorted_pairs
+
+# Add number pairs to lottery strategies (example)
+lottery_strategies["white"]["pairs"] = get_number_pairs(filtered_df[white_balls].values)
+
+def generate_multiple_tickets_with_pairs(lottery_strategies):
     try:
         num_tickets = int(input("How many tickets do you want to generate? "))
     except ValueError:
@@ -103,26 +129,54 @@ def generate_multiple_tickets(lottery_strategies):
     tickets = []
 
     for ticket_num in range(1, num_tickets + 1):
-        # --- Get user input for WHITE balls ---
-        while True:
-            print("Enter how many numbers to pick from each category for WHITE balls (total must be 5).")
-            try:
-                hot_count_white = int(input("Number from HOT white balls: "))
-                cold_count_white = int(input("Number from COLD white balls: "))
-                overdue_count_white = int(input("Number from OVERDUE white balls: "))
-            except ValueError:
-                print("Please enter valid integers.")
-                continue
+        white_pick = []
+        print("\nGenerating Ticket(s)...")
 
-            total_white = hot_count_white + cold_count_white + overdue_count_white
-            if total_white != 5:
-                print(f"Total white balls must be exactly 5. You entered {total_white}. Please try again.")
-                continue
-            break  # valid input, exit loop
+        #ask user about freq number pair
+        use_pair = input("Do you want to include a frequent number pair in this ticket? (y/n): ").lower()
+        if use_pair == "y" and lottery_strategies["white"]["pairs"]:
+            top_pairs = lottery_strategies["white"]["pairs"][:10]  # top 10 pairs
+            chosen_pair = random.choice(top_pairs)
+            white_pick.extend(chosen_pair)
+            print(f"Pair chosen: {chosen_pair}")
 
-        # --- Get user input for POWERBALL ---
+        #calculate remaining numbers needed
+        remaining_needed = 5 - len(white_pick)
+        if remaining_needed > 0:
+            print(f"You need {remaining_needed} more numbers to reach 5 WHITE balls.")
+
+            #get user input for remaining white balls
+            while True:
+                try:
+                    hot_count_white = int(input("Number from HOT white balls: "))
+                    cold_count_white = int(input("Number from COLD white balls: "))
+                    overdue_count_white = int(input("Number from OVERDUE white balls: "))
+                except ValueError:
+                    print("Please enter valid integers.")
+                    continue
+
+                total_remaining = hot_count_white + cold_count_white + overdue_count_white
+                if total_remaining != remaining_needed:
+                    print(f"Total remaining numbers must be exactly {remaining_needed}. You entered {total_remaining}. Try again.")
+                    continue
+                break
+
+            #pick remaining white balls
+            if hot_count_white > 0:
+                white_pick += random.sample(lottery_strategies["white"]["hot"], hot_count_white)
+            if cold_count_white > 0:
+                white_pick += random.sample(lottery_strategies["white"]["cold"], cold_count_white)
+            if overdue_count_white > 0:
+                white_pick += random.sample(lottery_strategies["white"]["overdue"], overdue_count_white)
+
+        #remove duplicates and fill any missing numbers
+        white_pick = list(set(white_pick))
+        while len(white_pick) < 5:
+            remaining = set(range(1, 70)) - set(white_pick)
+            white_pick.append(random.choice(list(remaining)))
+
+        #get user input for powerball
         while True:
-            print("Enter how many numbers to pick from each category for POWERBALL (total must be 1).")
             try:
                 hot_count_pb = int(input("Number from HOT Powerballs: "))
                 cold_count_pb = int(input("Number from COLD Powerballs: "))
@@ -133,39 +187,32 @@ def generate_multiple_tickets(lottery_strategies):
 
             total_pb = hot_count_pb + cold_count_pb + overdue_count_pb
             if total_pb != 1:
-                print(f"Total Powerball numbers must be exactly 1. You entered {total_pb}. Please try again.")
+                print(f"Total Powerball numbers must be exactly 1. You entered {total_pb}. Try again.")
                 continue
             break
 
-        # --- Pick WHITE balls ---
-        white_pick = []
-        white_pick += random.sample(lottery_strategies["white"]["hot"], hot_count_white)
-        white_pick += random.sample(lottery_strategies["white"]["cold"], cold_count_white)
-        white_pick += random.sample(lottery_strategies["white"]["overdue"], overdue_count_white)
-
-        white_pick = list(set(white_pick))
-        while len(white_pick) < 5:
-            remaining = set(range(1, 70)) - set(white_pick)
-            white_pick.append(random.choice(list(remaining)))
-
-        # --- Pick POWERBALL ---
+        #pick powerball
         powerball_options = []
-        powerball_options += random.sample(lottery_strategies["powerball"]["hot"], hot_count_pb)
-        powerball_options += random.sample(lottery_strategies["powerball"]["cold"], cold_count_pb)
-        powerball_options += random.sample(lottery_strategies["powerball"]["overdue"], overdue_count_pb)
+        if hot_count_pb > 0:
+            powerball_options += random.sample(lottery_strategies["powerball"]["hot"], hot_count_pb)
+        if cold_count_pb > 0:
+            powerball_options += random.sample(lottery_strategies["powerball"]["cold"], cold_count_pb)
+        if overdue_count_pb > 0:
+            powerball_options += random.sample(lottery_strategies["powerball"]["overdue"], overdue_count_pb)
         powerball_pick = powerball_options[0]
 
-        # --- Store ticket ---
+        #store ticket
         tickets.append({
             "white": sorted(white_pick),
             "powerball": powerball_pick
         })
 
-    # --- Print all tickets ---
+
+    #print all tickets
     print("\n🎟 Generated Lottery Tickets 🎟")
     for i, ticket in enumerate(tickets, start=1):
         print(f"Ticket {i}: White balls: {ticket['white']}, Powerball: {ticket['powerball']}")
 
 
 # --- Example usage ---
-generate_multiple_tickets(lottery_strategies)
+generate_multiple_tickets_with_pairs(lottery_strategies)
