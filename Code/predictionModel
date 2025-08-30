@@ -5,57 +5,167 @@ import random
 from collections import Counter
 
 # Load historical data
-data_path = 'Data/FilteredData_2022_2025.csv'  # Adjust path as needed
+data_path = 'Data/CleanedData_2010_2025.csv'  # Adjust path as needed
 df = pd.read_csv(data_path)
 
-# Assuming columns: 'DrawDate', 'Num 1', 'Num 2', 'Num 3', 'Num 4', 'Num 5', 'Powerball'
-main_numbers = df[['Num 1', 'Num 2', 'Num 3', 'Num 4', 'Num 5']].values.flatten()
-powerballs = df['Powerball'].values
+#typically going to be between 10-15 otherwise could too cold or too hot respectively
+hot_limit = 15
+cold_limit = 15
 
-# Hot and cold numbers
-main_counter = Counter(main_numbers)
-powerball_counter = Counter(powerballs)
+#filter from a starting year from 2010 to 2025
+start_year = 2022 #change to what year you want to start reading from
+df['Draw Date'] = pd.to_datetime(df['Draw Date']) #make sure its datetime
 
-# Get top/bottom N hot/cold numbers
-def get_hot_cold(counter, n=5):
-    hot = [num for num, _ in counter.most_common(n)]
-    cold = [num for num, _ in counter.most_common()[:-n-1:-1]]
-    return hot, cold
+#filter for draws from start_year until today
+filtered_df = df[df['Draw Date'].dt.year >= start_year]
 
-hot_main, cold_main = get_hot_cold(main_counter)
-hot_pb, cold_pb = get_hot_cold(powerball_counter)
+#Now use the filtered dataframe for predictions
 
-# Weighted random selection
-def weighted_random(counter, pool_size, pick_count):
-    weights = [counter.get(i, 1) for i in range(1, pool_size+1)]
-    total = sum(weights)
-    norm_weights = [w / total for w in weights]
-    return np.random.choice(range(1, pool_size+1), size=pick_count, replace=False, p=norm_weights)
+# Ensure correct data types
+white_balls= ["Num 1", "Num 2", "Num 3", "Num 4", "Num 5"]
+powerball = ["Powerball"]
 
-# Predict next numbers
-def predict_next():
-    # Powerball rules: 5 numbers (1-69), 1 powerball (1-26)
-    main_pool = 69
-    pb_pool = 26
+df[white_balls] = df[white_balls].astype(int)
+df[powerball] = df[powerball].astype(int)
 
-    # Strategy: 2 hot, 2 cold, 1 weighted random
-    prediction = []
-    prediction += random.sample(hot_main, 2)
-    prediction += random.sample(cold_main, 2)
-    remaining = set(range(1, main_pool+1)) - set(prediction)
-    weighted_pick = weighted_random(main_counter, main_pool, 1)
-    for num in weighted_pick:
-        if num in remaining:
-            prediction.append(num)
+# Place all values into a single array ignoring Powerball
+all_white_numbers = filtered_df[white_balls].values.flatten()
+powerballs = filtered_df[powerball].values.flatten()
+
+# count the numbers that showed the most in the last 3 years
+white_most_freq = pd.Series(all_white_numbers).value_counts().index.to_list()
+powerball_most_freq = pd.Series(powerballs).value_counts().index.to_list()
+
+# count the numbers that showed the least in the last 3 years
+white_least_freq = pd.Series(all_white_numbers).value_counts().index.to_list()[::-1]
+powerball_least_freq = pd.Series(powerballs).value_counts().index.to_list()[::-1]
+
+def get_overdue(draws, number_range):
+    total_draws = draws.shape[0]
+    last_seen = {num: -1 for num in range(1, number_range + 1)}
+    
+    #iterate through each draw in order (by date)
+    
+    for i, row in enumerate(draws):
+        for num in row:
+            last_seen[num] = i #update last seen
+            
+    #compute overdue values
+    overdue_numbers = []
+    for num in range(1, number_range + 1):
+        if last_seen[num] == -1:
+            overdue_value = total_draws + 1 #never seen
+        else:
+            overdue_value = total_draws - last_seen[num]
+        overdue_numbers.append((num, overdue_value))
+    
+    #sort overdue numbers by their overdue value
+    overdue_numbers.sort(key=lambda x: x[1], reverse=True)
+    return [num for num, _ in overdue_numbers]
+
+
+# Get overdue white balls and powerballs
+# White balls (1–69 range)
+white_overdue = get_overdue(filtered_df[white_balls].values, 69)
+
+# Powerball (1–26 range)
+powerball_overdue = get_overdue(filtered_df[powerball].values, 26)
+
+# ---- Strategy dictionary ----
+#has 2 keys: "white" and "powerball"
+#values for each key are dictionaries(nested) with strategies "hot", "cold", and "overdue"
+lottery_strategies = {
+    "white": {
+        "hot": pd.Series(all_white_numbers).value_counts().index.tolist(),
+        "cold": pd.Series(all_white_numbers).value_counts().index.tolist()[::-1],
+        "overdue": white_overdue,
+    },
+    "powerball": {
+        "hot": pd.Series(powerballs).value_counts().index.tolist(),
+        "cold": pd.Series(powerballs).value_counts().index.tolist()[::-1],
+        "overdue": powerball_overdue,
+    }
+}
+
+#slice the lists to only contain a certain number of elements
+hot_numbers = lottery_strategies["white"]["hot"][:hot_limit]
+cold_numbers = lottery_strategies["white"]["cold"][:cold_limit]
+overdue_numbers = lottery_strategies["white"]["overdue"] #keep full list
+
+#generate multiple tickets based on user input
+def generate_multiple_tickets(lottery_strategies):
+    try:
+        num_tickets = int(input("How many tickets do you want to generate? "))
+    except ValueError:
+        print("Please enter a valid integer.")
+        return
+
+    tickets = []
+
+    for ticket_num in range(1, num_tickets + 1):
+        # --- Get user input for WHITE balls ---
+        while True:
+            print("Enter how many numbers to pick from each category for WHITE balls (total must be 5).")
+            try:
+                hot_count_white = int(input("Number from HOT white balls: "))
+                cold_count_white = int(input("Number from COLD white balls: "))
+                overdue_count_white = int(input("Number from OVERDUE white balls: "))
+            except ValueError:
+                print("Please enter valid integers.")
+                continue
+
+            total_white = hot_count_white + cold_count_white + overdue_count_white
+            if total_white != 5:
+                print(f"Total white balls must be exactly 5. You entered {total_white}. Please try again.")
+                continue
+            break  # valid input, exit loop
+
+        # --- Get user input for POWERBALL ---
+        while True:
+            print("Enter how many numbers to pick from each category for POWERBALL (total must be 1).")
+            try:
+                hot_count_pb = int(input("Number from HOT Powerballs: "))
+                cold_count_pb = int(input("Number from COLD Powerballs: "))
+                overdue_count_pb = int(input("Number from OVERDUE Powerballs: "))
+            except ValueError:
+                print("Please enter valid integers.")
+                continue
+
+            total_pb = hot_count_pb + cold_count_pb + overdue_count_pb
+            if total_pb != 1:
+                print(f"Total Powerball numbers must be exactly 1. You entered {total_pb}. Please try again.")
+                continue
             break
-    prediction = sorted(prediction)
 
-    # Powerball: 1 hot/cold/weighted random
-    pb_choice = random.choice([random.choice(hot_pb), random.choice(cold_pb), weighted_random(powerball_counter, pb_pool, 1)[0]])
+        # --- Pick WHITE balls ---
+        white_pick = []
+        white_pick += random.sample(lottery_strategies["white"]["hot"], hot_count_white)
+        white_pick += random.sample(lottery_strategies["white"]["cold"], cold_count_white)
+        white_pick += random.sample(lottery_strategies["white"]["overdue"], overdue_count_white)
 
-    return prediction, pb_choice
+        white_pick = list(set(white_pick))
+        while len(white_pick) < 5:
+            remaining = set(range(1, 70)) - set(white_pick)
+            white_pick.append(random.choice(list(remaining)))
 
-if __name__ == "__main__":
-    main_nums, powerball = predict_next()
-    print(f"Predicted main numbers: {main_nums}")
-    print(f"Predicted Powerball: {powerball}")
+        # --- Pick POWERBALL ---
+        powerball_options = []
+        powerball_options += random.sample(lottery_strategies["powerball"]["hot"], hot_count_pb)
+        powerball_options += random.sample(lottery_strategies["powerball"]["cold"], cold_count_pb)
+        powerball_options += random.sample(lottery_strategies["powerball"]["overdue"], overdue_count_pb)
+        powerball_pick = powerball_options[0]
+
+        # --- Store ticket ---
+        tickets.append({
+            "white": sorted(white_pick),
+            "powerball": powerball_pick
+        })
+
+    # --- Print all tickets ---
+    print("\n🎟 Generated Lottery Tickets 🎟")
+    for i, ticket in enumerate(tickets, start=1):
+        print(f"Ticket {i}: White balls: {ticket['white']}, Powerball: {ticket['powerball']}")
+
+
+# --- Example usage ---
+generate_multiple_tickets(lottery_strategies)
